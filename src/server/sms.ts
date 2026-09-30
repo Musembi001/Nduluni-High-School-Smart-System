@@ -24,7 +24,7 @@ export class SmsService {
       timestamp: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ', ' + new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
     };
 
-    db.addSmsLog(smsRecord);
+    if (!(await db.addSmsLog(smsRecord))) throw new Error('Payment receipt could not be saved to the school ledger.');
     return smsRecord;
   }
 
@@ -49,7 +49,7 @@ export class SmsService {
       timestamp: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ', ' + new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' })
     };
 
-    db.addSmsLog(smsRecord);
+    if (!(await db.addSmsLog(smsRecord))) throw new Error('Academic alert could not be saved to the school ledger.');
     return smsRecord;
   }
 }

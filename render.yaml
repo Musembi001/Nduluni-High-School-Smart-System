@@ -1,0 +1,25 @@
+services:
+  - type: web
+    name: nduluni-high-school
+    runtime: node
+    plan: starter
+    buildCommand: npm ci --include=dev && npm run build
+    startCommand: npm start
+    healthCheckPath: /api/v1/health
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: DATABASE_URL
+        fromDatabase:
+          name: nduluni-school-production
+          property: connectionString
+      - key: INITIAL_PRINCIPAL_USERNAME
+        sync: false
+      - key: INITIAL_PRINCIPAL_PASSWORD
+        sync: false
+
+databases:
+  - name: nduluni-school-production
+    databaseName: nduluni_school
+    user: nduluni_app
+    plan: basic-256mb

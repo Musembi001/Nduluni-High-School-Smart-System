@@ -68,7 +68,7 @@ export const HeroSection: React.FC<HeroSectionProps> = ({ onNavigate }) => {
             {/* Quick Action Triggers */}
             <div className="pt-2 flex flex-wrap gap-3">
               <button
-                onClick={() => onNavigate('portal')}
+                onClick={() => onNavigate('my_dashboard')}
                 className="px-5 py-3 text-sm font-semibold text-stone-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors shadow-lg flex items-center gap-2 cursor-pointer"
               >
                 <GraduationCap className="w-4 h-4 text-stone-950" />

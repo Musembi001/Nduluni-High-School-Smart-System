@@ -17,7 +17,9 @@ import {
   Award,
   ChevronDown,
   LayoutDashboard,
-  UserPlus
+  UserPlus,
+  LogOut,
+  Settings
 } from 'lucide-react';
 
 interface NavbarProps {
@@ -27,7 +29,7 @@ interface NavbarProps {
 
 export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab }) => {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
-  const { currentUser, role, setIsAuthModalOpen } = useAuth();
+  const { currentUser, role, isAuthenticated, logout, setIsAuthModalOpen, setIsSettingsOpen } = useAuth();
 
   const getDashboardLabel = () => {
     switch (role) {
@@ -44,7 +46,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab }) => {
 
   const navLinks = [
     { id: 'overview', label: 'Overview' },
-    { id: 'my_dashboard', label: getDashboardLabel(), highlight: true },
+    { id: 'my_dashboard', label: isAuthenticated ? getDashboardLabel() : 'Sign in', highlight: true },
     { id: 'fees', label: 'Online Fee Pay' },
     { id: 'library', label: 'Library & OPAC' },
     { id: 'calendar', label: 'Event Calendar' },
@@ -61,6 +63,7 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab }) => {
   };
 
   const getRoleBadge = () => {
+    if (!isAuthenticated) return { label: 'Sign in to access your account', bg: 'bg-stone-800 text-stone-200 border-stone-600', icon: UserCheck };
     switch (role) {
       case 'PRINCIPAL':
         return { label: 'Chief Principal (Super Admin)', bg: 'bg-purple-900/60 text-purple-200 border-purple-500/40', icon: Shield };
@@ -94,15 +97,20 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab }) => {
 
           <div className="flex items-center gap-3 text-stone-300">
             {/* Live Role & Registration Trigger Button */}
-            <button
-              onClick={() => setIsAuthModalOpen(true)}
-              className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border flex items-center gap-1.5 transition-all cursor-pointer hover:brightness-125 ${roleBadgeInfo.bg}`}
-              title="Click to switch role or register new institutional account"
-            >
-              <RoleIcon className="w-3.5 h-3.5" />
-              <span>Role: {roleBadgeInfo.label}</span>
-              <ChevronDown className="w-3 h-3 opacity-60" />
-            </button>
+            {isAuthenticated ? (
+              <span className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border flex items-center gap-1.5 ${roleBadgeInfo.bg}`}>
+                <RoleIcon className="w-3.5 h-3.5" />
+                <span>{currentUser.name} · {roleBadgeInfo.label}</span>
+              </span>
+            ) : (
+              <button
+                onClick={() => setIsAuthModalOpen(true)}
+                className={`px-2.5 py-1 rounded-md text-[11px] font-semibold border flex items-center gap-1.5 transition-all cursor-pointer hover:brightness-125 ${roleBadgeInfo.bg}`}
+              >
+                <RoleIcon className="w-3.5 h-3.5" />
+                <span>Sign in</span>
+              </button>
+            )}
 
             <span className="hidden sm:inline text-stone-500">|</span>
 
@@ -113,6 +121,29 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab }) => {
               <UserPlus className="w-3 h-3 text-amber-400" />
               <span>Register Account</span>
             </button>
+
+            {isAuthenticated && (
+              <button
+                onClick={() => setIsSettingsOpen(true)}
+                className="text-stone-300 hover:text-white font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+              >
+                <Settings className="w-3 h-3" />
+                <span>Settings</span>
+              </button>
+            )}
+
+            {isAuthenticated && (
+              <button
+                onClick={() => {
+                  logout();
+                  handleNav('overview');
+                }}
+                className="text-stone-300 hover:text-white font-semibold flex items-center gap-1 transition-colors cursor-pointer"
+              >
+                <LogOut className="w-3 h-3" />
+                <span>Sign out</span>
+              </button>
+            )}
 
             <span className="hidden sm:inline text-stone-500">|</span>
 
@@ -125,9 +156,10 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab }) => {
       </div>
 
       {/* Main Top Bar Contract: Zone 1 (Wordmark), Zone 2 (Nav Links), Zone 3 (Primary Actions) */}
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-18 flex items-center justify-between gap-4">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 w-full">
+        <div className="h-18 flex items-center justify-between gap-4">
         {/* Zone 1: Single text element wordmark */}
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 min-w-0">
           <button 
             onClick={() => handleNav('overview')} 
             className="text-left flex items-center gap-3 group focus:outline-none"
@@ -147,8 +179,30 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab }) => {
           </button>
         </div>
 
-        {/* Zone 2: Clean text navigation links */}
-        <nav className="hidden lg:flex items-center gap-6 text-sm font-medium text-stone-600">
+        {/* Zone 3: Primary Actions */}
+        <div className="flex items-center gap-2 sm:gap-3 shrink-0">
+          <button
+            onClick={() => handleNav('my_dashboard')}
+            className="px-4 py-2 text-xs font-semibold text-white bg-rose-950 rounded-lg hover:bg-rose-900 transition-colors shadow-sm whitespace-nowrap flex items-center gap-1.5 cursor-pointer"
+          >
+            <LayoutDashboard className="w-3.5 h-3.5 text-amber-400" />
+            <span>{isAuthenticated ? `My ${getDashboardLabel()}` : 'Sign in'}</span>
+          </button>
+
+          {/* Mobile and compact desktop menu button */}
+          <button
+            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+            className="lg:hidden p-2 text-stone-600 hover:text-stone-900 focus:outline-none cursor-pointer"
+            aria-label="Toggle navigation menu"
+            aria-expanded={mobileMenuOpen}
+          >
+            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
+          </button>
+        </div>
+        </div>
+
+        {/* Section navigation has its own row so links never squeeze the wordmark. */}
+        <nav className="hidden lg:flex flex-wrap items-center justify-center gap-x-5 gap-y-1 border-t border-stone-100 py-2 text-sm font-medium text-stone-600">
           {navLinks.map((link) => (
             <button
               key={link.id}
@@ -168,43 +222,17 @@ export const Navbar: React.FC<NavbarProps> = ({ currentTab, onSelectTab }) => {
             </button>
           ))}
         </nav>
-
-        {/* Zone 3: Primary Actions */}
-        <div className="flex items-center gap-2 sm:gap-3">
-          <button
-            onClick={() => handleNav('my_dashboard')}
-            className="px-4 py-2 text-xs font-semibold text-white bg-rose-950 rounded-lg hover:bg-rose-900 transition-colors shadow-sm whitespace-nowrap flex items-center gap-1.5 cursor-pointer"
-          >
-            <LayoutDashboard className="w-3.5 h-3.5 text-amber-400" />
-            <span>My {getDashboardLabel()}</span>
-          </button>
-
-          {/* Mobile hamburger button */}
-          <button
-            onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
-            className="lg:hidden p-2 text-stone-600 hover:text-stone-900 focus:outline-none cursor-pointer"
-            aria-label="Toggle navigation menu"
-          >
-            {mobileMenuOpen ? <X className="w-6 h-6" /> : <Menu className="w-6 h-6" />}
-          </button>
-        </div>
       </div>
 
       {/* Mobile Drawer */}
       {mobileMenuOpen && (
         <div className="lg:hidden border-t border-stone-200 bg-white px-4 pt-3 pb-6 space-y-1">
-          <div className="p-3 mb-2 bg-stone-100 rounded-lg flex items-center justify-between text-xs">
-            <span className="text-stone-600">Active Role:</span>
-            <button
-              onClick={() => {
-                setIsAuthModalOpen(true);
-                setMobileMenuOpen(false);
-              }}
-              className="font-bold text-rose-900 underline"
-            >
-              {roleBadgeInfo.label} (Switch / Register)
-            </button>
-          </div>
+          {isAuthenticated && (
+            <div className="p-3 mb-2 bg-stone-100 rounded-lg flex items-center justify-between text-xs">
+              <span className="text-stone-600">Signed in:</span>
+              <span className="font-bold text-rose-900">{currentUser.name} · {roleBadgeInfo.label}</span>
+            </div>
+          )}
 
           {navLinks.map((link) => (
             <button

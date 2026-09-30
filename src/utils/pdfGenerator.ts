@@ -77,8 +77,8 @@ export function generateStudentReportPDF(student: Student, report: TermReport) {
 
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(15, 23, 42);
-  doc.text(`${student.kcpeMarks} / 500`, 146, 49);
-  doc.text(`${student.attendanceRate}% (Satisfactory)`, 146, 55);
+  doc.text(student.kcpeMarks === null ? 'Not recorded' : `${student.kcpeMarks} / 500`, 146, 49);
+  doc.text(student.attendanceRate === null ? 'Not recorded' : `${student.attendanceRate}%`, 146, 55);
   doc.text(student.classTeacher || 'Mr. Dennis Ochieng (TSC #412093)', 146, 61);
 
   // 5. Academic Performance Table
@@ -372,7 +372,7 @@ export function generateClassBroadsheetPDF(form: number, stream: string, student
   doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
   doc.setTextColor(71, 85, 105);
-  doc.text(`EXAMINATION SESSION: TERM 1, 2026 | FORM ${form} ${stream.toUpperCase()} | KNEC CENTRE ${SCHOOL_INFO.knecCode}`, pageWidth / 2, 17, { align: 'center' });
+  doc.text(`EXAMINATION SESSION: TERM 1, 2026 | FORM ${form} ${stream ? stream.toUpperCase() : 'ALL STREAMS'} | KNEC CENTRE ${SCHOOL_INFO.knecCode}`, pageWidth / 2, 17, { align: 'center' });
 
   doc.setDrawColor(226, 232, 240);
   doc.line(14, 20, pageWidth - 14, 20);
@@ -388,10 +388,10 @@ export function generateClassBroadsheetPDF(form: number, stream: string, student
       s.admissionNo,
       s.fullName,
       s.house || 'Kilimanjaro',
-      sub.cat1 || 24,
-      sub.cat2 || 25,
-      sub.endTerm || 33,
-      `${sub.score || 82}%`,
+      sub.cat1 ?? 0,
+      sub.cat2 ?? 0,
+      sub.endTerm ?? 0,
+      `${sub.score ?? 0}%`,
       sub.grade || 'A',
       sub.points || 12,
       meanGrade,

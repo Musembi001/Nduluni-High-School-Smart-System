@@ -57,7 +57,6 @@ export const FeePaymentSystem: React.FC<FeePaymentSystemProps> = ({
   // M-Pesa STK Push Simulation State
   const [isProcessingStk, setIsProcessingStk] = useState(false);
   const [showStkPrompt, setShowStkPrompt] = useState(false);
-  const [mpesaPin, setMpesaPin] = useState('');
   const [lastReceipt, setLastReceipt] = useState<PaymentTransaction | null>(null);
   const [paymentSuccessMsg, setPaymentSuccessMsg] = useState<string | null>(null);
   const [checkoutId, setCheckoutId] = useState<string>('');
@@ -159,9 +158,7 @@ export const FeePaymentSystem: React.FC<FeePaymentSystemProps> = ({
           alert(`STK Push failed: ${json.error}`);
         }
       } catch (err) {
-        // Fallback simulation
-        setCheckoutId(`ws_CO_${Date.now()}`);
-        setShowStkPrompt(true);
+        alert('Could not reach the payment service. No payment was recorded. Please try again later.');
       } finally {
         setIsProcessingStk(false);
       }
@@ -188,13 +185,15 @@ export const FeePaymentSystem: React.FC<FeePaymentSystemProps> = ({
           setLastReceipt(json.data.transaction);
           setPaymentSuccessMsg(`Bank deposit slip ${bankRefCode} validated. KES ${amountNum.toLocaleString()} credited to ${currentStudent.fullName}.`);
           loadServerData();
+        } else {
+          const json = await res.json();
+          alert(json.error || 'The deposit could not be verified.');
         }
       } catch (err) {
         alert("Server communication error. Please try again.");
       }
     } else {
-      // Card Payment
-      confirmCallbackDirect('Credit/Debit Card', `CARD-${Math.random().toString(36).substring(2, 9).toUpperCase()}`);
+      alert('Card payments are unavailable until a payment provider is configured. No payment was recorded.');
     }
   };
 
@@ -203,7 +202,6 @@ export const FeePaymentSystem: React.FC<FeePaymentSystemProps> = ({
     const amountNum = parseFloat(paymentAmount);
 
     try {
-      // Real Webhook Confirmation to Backend
       const res = await fetch('/api/v1/payments/mpesa/callback', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -215,47 +213,21 @@ export const FeePaymentSystem: React.FC<FeePaymentSystemProps> = ({
         })
       });
 
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        throw new Error(json.error || 'Payment confirmation failed.');
+      }
+
       if (res.ok) {
-        const json = await res.json();
         setLastReceipt(json.data.transaction);
         setPaymentSuccessMsg(`Payment of KES ${amountNum.toLocaleString()} confirmed via M-Pesa ${json.data.transaction.referenceCode}! SMS receipt dispatched.`);
         await loadServerData();
       }
-    } catch (e) {
-      confirmCallbackDirect('M-PESA', `TK${Math.random().toString(36).substring(2, 10).toUpperCase()}`);
+    } catch (err) {
+      alert(err instanceof Error ? err.message : 'Payment confirmation failed. No payment was recorded.');
+    } finally {
+      setShowStkPrompt(false);
     }
-    setMpesaPin('');
-  };
-
-  const confirmCallbackDirect = (method: 'M-PESA' | 'Bank Deposit' | 'Credit/Debit Card', refCode: string) => {
-    const amountNum = parseFloat(paymentAmount);
-    const newReceiptNo = `NHS-REC-2026-${Math.floor(1000 + Math.random() * 9000)}`;
-    const newTxn: PaymentTransaction = {
-      id: `txn-${Date.now()}`,
-      receiptNo: newReceiptNo,
-      admissionNo: currentStudent.admissionNo,
-      studentName: currentStudent.fullName,
-      amount: amountNum,
-      paymentMethod: method,
-      referenceCode: refCode,
-      date: new Date().toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ', ' + new Date().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' }),
-      term: 'Term 1, 2026',
-      status: 'Completed',
-      receivedBy: method === 'M-PESA' ? 'Automated M-Pesa Gateway' : 'School Bursar (Verified)'
-    };
-
-    const updatedStudents = studentsList.map(s => {
-      if (s.admissionNo === currentStudent.admissionNo) {
-        const newBal = Math.max(0, s.currentTermBalance - amountNum);
-        return { ...s, currentTermBalance: newBal };
-      }
-      return s;
-    });
-
-    setStudentsList(updatedStudents);
-    setTransactions([newTxn, ...transactions]);
-    setLastReceipt(newTxn);
-    setPaymentSuccessMsg(`Payment of KES ${amountNum.toLocaleString()} successfully received and reconciled for ${currentStudent.fullName}!`);
   };
 
   const handlePrintReceipt = () => {
@@ -263,7 +235,7 @@ export const FeePaymentSystem: React.FC<FeePaymentSystemProps> = ({
   };
 
   return (
-    <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+    <div className="w-full min-w-0 max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* Header Banner */}
       <div className="no-print bg-stone-900 text-white rounded-2xl p-6 sm:p-8 relative overflow-hidden shadow-sm">
         <div className="relative z-10 flex flex-col md:flex-row md:items-center justify-between gap-6">
@@ -272,13 +244,13 @@ export const FeePaymentSystem: React.FC<FeePaymentSystemProps> = ({
               <ShieldCheck className="w-3.5 h-3.5" />
               <span>MoE Verified Automated School Fees Reconciliation Engine</span>
               <span className="text-stone-500">·</span>
-              <span className="text-amber-300">Daraja 2.0 Webhook Connected</span>
+              <span className="text-amber-300">Development payment simulator</span>
             </div>
             <h1 className="text-2xl sm:text-3xl font-bold font-display">
               Online Fee Payment & Statement System
             </h1>
             <p className="text-stone-300 text-sm max-w-2xl font-sans">
-              Instant digital fee clearance via Lipa na M-Pesa Paybill <strong className="text-white font-mono">{SCHOOL_INFO.mpesaPaybill}</strong> or direct bank deposit. Official Ministry-compliant receipts generated immediately.
+              Review fee balances and transaction history. Payment confirmation is recorded only by the configured payment service or bursary staff.
             </p>
           </div>
 
@@ -492,7 +464,7 @@ export const FeePaymentSystem: React.FC<FeePaymentSystemProps> = ({
                         className="w-full px-3 py-2 text-xs font-mono rounded border border-stone-300 bg-white"
                       />
                       <p className="text-[11px] text-stone-500 mt-1">
-                        Transmits a real-time Safaricom Daraja STK Push prompt to your handset. Enter PIN to complete.
+                        Development mode only. No Safaricom request is sent; never enter your M-Pesa PIN on this website.
                       </p>
                     </div>
                   </div>
@@ -855,8 +827,8 @@ export const FeePaymentSystem: React.FC<FeePaymentSystemProps> = ({
           </div>
 
           {/* Transactions Table with Live Status Updates */}
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs border-collapse">
+          <div className="min-w-0 max-w-full overflow-x-auto">
+            <table className="w-full min-w-[900px] text-left text-xs border-collapse">
               <thead>
                 <tr className="bg-stone-900 text-white font-medium">
                   <th className="py-3 px-3">Receipt No</th>
@@ -995,7 +967,7 @@ export const FeePaymentSystem: React.FC<FeePaymentSystemProps> = ({
         </div>
       )}
 
-      {/* Simulated Safaricom M-Pesa STK Push Modal */}
+      {/* Local development-only payment confirmation */}
       {showStkPrompt && (
         <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex items-center justify-center p-4">
           <div className="bg-stone-900 text-white rounded-2xl max-w-sm w-full p-6 shadow-2xl border border-stone-700 space-y-4 animate-in fade-in zoom-in-95 duration-200">
@@ -1004,9 +976,9 @@ export const FeePaymentSystem: React.FC<FeePaymentSystemProps> = ({
                 <div className="w-6 h-6 rounded bg-emerald-600 flex items-center justify-center font-bold text-xs text-white">
                   M
                 </div>
-                <span className="font-bold text-sm tracking-wide">SIM Toolkit · Safaricom</span>
+                <span className="font-bold text-sm tracking-wide">Development M-Pesa Simulator</span>
               </div>
-              <span className="text-xs text-stone-400 font-mono">STK PUSH</span>
+              <span className="text-xs text-amber-300 font-mono">NOT A LIVE PAYMENT</span>
             </div>
 
             <div className="bg-stone-950 p-4 rounded-xl border border-stone-800 text-xs font-mono space-y-2 text-stone-200">
@@ -1016,21 +988,7 @@ export const FeePaymentSystem: React.FC<FeePaymentSystemProps> = ({
               <p className="text-stone-400">Paybill: 522123</p>
               <p className="text-stone-400">Account: {currentStudent.admissionNo}</p>
             </div>
-
-            <div className="space-y-1.5">
-              <label className="block text-xs font-medium text-stone-300">
-                Enter M-PESA PIN:
-              </label>
-              <input
-                type="password"
-                maxLength={4}
-                autoFocus
-                placeholder="••••"
-                value={mpesaPin}
-                onChange={(e) => setMpesaPin(e.target.value)}
-                className="w-full text-center text-lg tracking-widest px-3 py-2 rounded-lg bg-stone-800 border border-stone-700 text-white focus:outline-none focus:ring-2 focus:ring-emerald-500 font-mono"
-              />
-            </div>
+            <p className="text-xs text-amber-200">This local simulator does not contact Safaricom or charge a mobile-money account.</p>
 
             <div className="grid grid-cols-2 gap-3 pt-2">
               <button
@@ -1045,7 +1003,7 @@ export const FeePaymentSystem: React.FC<FeePaymentSystemProps> = ({
                 onClick={confirmMpesaPrompt}
                 className="py-2 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-500 rounded-lg shadow cursor-pointer"
               >
-                Confirm Payment
+                Simulate Confirmation
               </button>
             </div>
           </div>

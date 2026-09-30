@@ -11,6 +11,8 @@ export interface UserProfile {
   department?: string;
   admissionNo?: string;
   tscNumber?: string;
+  phone?: string;
+  email?: string;
   permissions: string[];
 }
 
@@ -55,55 +57,58 @@ export const PRESET_ROLES: Record<string, UserProfile> = {
 interface AuthContextType {
   currentUser: UserProfile;
   role: UserRole;
-  token: string;
-  loginAsRole: (roleKey: 'principal' | 'bursar' | 'teacher' | 'parent') => Promise<void>;
-  registerAccount: (payload: any) => Promise<{ success: boolean; error?: string }>;
+  isAuthenticated: boolean;
+  login: (username: string, password: string) => Promise<{ success: boolean; error?: string }>;
+  registerAccount: (payload: any) => Promise<{ success: boolean; error?: string; pending?: boolean }>;
+  updateAccount: (payload: { name: string; phone?: string; email?: string }) => Promise<{ success: boolean; error?: string }>;
   logout: () => void;
   hasPermission: (permission: string) => boolean;
   isAuthModalOpen: boolean;
   setIsAuthModalOpen: (open: boolean) => void;
+  isSettingsOpen: boolean;
+  setIsSettingsOpen: (open: boolean) => void;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentUser, setCurrentUser] = useState<UserProfile>(() => {
-    const saved = localStorage.getItem('nduluni_auth_user');
-    return saved ? JSON.parse(saved) : PRESET_ROLES.parent;
-  });
-
-  const [token, setToken] = useState<string>(() => {
-    return localStorage.getItem('nduluni_auth_token') || 'token-parent-default';
-  });
-
+  const [currentUser, setCurrentUser] = useState<UserProfile>(PRESET_ROLES.parent);
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [isAuthModalOpen, setIsAuthModalOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
-  const loginAsRole = async (roleKey: 'principal' | 'bursar' | 'teacher' | 'parent') => {
+  useEffect(() => {
+    fetch('/api/v1/auth/me')
+      .then(async res => res.ok ? res.json() : null)
+      .then(json => {
+        if (json?.user) {
+          setCurrentUser(json.user);
+          setIsAuthenticated(true);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
+  const login = async (username: string, password: string) => {
     try {
       const res = await fetch('/api/v1/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username: roleKey, password: 'password123' })
+        body: JSON.stringify({ username, password })
       });
-      if (res.ok) {
-        const json = await res.json();
-        setCurrentUser(json.user);
-        setToken(json.token);
-        localStorage.setItem('nduluni_auth_user', JSON.stringify(json.user));
-        localStorage.setItem('nduluni_auth_token', json.token);
-      } else {
-        const profile = PRESET_ROLES[roleKey];
-        setCurrentUser(profile);
-        localStorage.setItem('nduluni_auth_user', JSON.stringify(profile));
+      const json = await res.json();
+      if (!res.ok || !json.success) {
+        return { success: false, error: json.error || 'Authentication failed.' };
       }
-    } catch (e) {
-      const profile = PRESET_ROLES[roleKey];
-      setCurrentUser(profile);
-      localStorage.setItem('nduluni_auth_user', JSON.stringify(profile));
+      setCurrentUser(json.user);
+      setIsAuthenticated(true);
+      return { success: true };
+    } catch {
+      return { success: false, error: 'Could not reach the authentication service.' };
     }
   };
 
-  const registerAccount = async (payload: any): Promise<{ success: boolean; error?: string }> => {
+  const registerAccount = async (payload: any): Promise<{ success: boolean; error?: string; pending?: boolean }> => {
     try {
       const res = await fetch('/api/v1/auth/register', {
         method: 'POST',
@@ -112,11 +117,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       const json = await res.json();
       if (res.ok && json.success) {
-        setCurrentUser(json.user);
-        setToken(json.token);
-        localStorage.setItem('nduluni_auth_user', JSON.stringify(json.user));
-        localStorage.setItem('nduluni_auth_token', json.token);
-        return { success: true };
+        return { success: true, pending: Boolean(json.pending) };
       }
       return { success: false, error: json.error || 'Registration failed' };
     } catch (e: any) {
@@ -124,13 +125,30 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   };
 
+  const updateAccount = async (payload: { name: string; phone?: string; email?: string }) => {
+    try {
+      const res = await fetch('/api/v1/auth/me', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+      const json = await res.json();
+      if (!res.ok || !json.success) return { success: false, error: json.error || 'Settings could not be saved.' };
+      setCurrentUser(json.user);
+      return { success: true };
+    } catch {
+      return { success: false, error: 'Could not reach the account service.' };
+    }
+  };
+
   const logout = () => {
+    fetch('/api/v1/auth/logout', { method: 'POST' }).catch(() => undefined);
     setCurrentUser(PRESET_ROLES.parent);
-    localStorage.removeItem('nduluni_auth_user');
-    localStorage.removeItem('nduluni_auth_token');
+    setIsAuthenticated(false);
   };
 
   const hasPermission = (permission: string): boolean => {
+    if (!isAuthenticated) return false;
     if (currentUser.role === 'PRINCIPAL') return true;
     return currentUser.permissions.includes(permission) || currentUser.permissions.includes('ALL');
   };
@@ -140,13 +158,16 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       value={{
         currentUser,
         role: currentUser.role,
-        token,
-        loginAsRole,
+        isAuthenticated,
+        login,
         registerAccount,
+        updateAccount,
         logout,
         hasPermission,
         isAuthModalOpen,
-        setIsAuthModalOpen
+        setIsAuthModalOpen,
+        isSettingsOpen,
+        setIsSettingsOpen
       }}
     >
       {children}

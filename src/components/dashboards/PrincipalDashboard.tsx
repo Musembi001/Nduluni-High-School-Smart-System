@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { SCHOOL_INFO } from '../../data/mockData';
 import { 
@@ -12,8 +12,29 @@ import {
   AlertCircle,
   RefreshCw,
   Lock,
-  Award
+  Award,
+  UserRoundCheck,
+  XCircle,
+  Upload,
+  Download,
+  UserRoundPlus
 } from 'lucide-react';
+import { parseStudentRosterFile, STUDENT_ROSTER_TEMPLATE, StudentRosterRow } from '../../utils/studentRosterImport';
+
+interface AccountRequest {
+  id: string;
+  name: string;
+  username: string;
+  roleTitle: string;
+  admissionNo?: string;
+  tscNumber?: string;
+  staffId?: string;
+  department?: string;
+  phone?: string;
+  email?: string;
+  requestedAt: string;
+  status: 'PENDING' | 'APPROVED' | 'REJECTED';
+}
 
 export const PrincipalDashboard: React.FC = () => {
   const { currentUser } = useAuth();
@@ -22,6 +43,117 @@ export const PrincipalDashboard: React.FC = () => {
   const [isSending, setIsSending] = useState(false);
   const [sendSuccess, setSendSuccess] = useState<string | null>(null);
   const [resultsApproved, setResultsApproved] = useState(true);
+  const [accountRequests, setAccountRequests] = useState<AccountRequest[]>([]);
+  const [requestNotice, setRequestNotice] = useState<string | null>(null);
+  const [registeredStudents, setRegisteredStudents] = useState<any[]>([]);
+  const [rosterPreview, setRosterPreview] = useState<StudentRosterRow[]>([]);
+  const [rosterErrors, setRosterErrors] = useState<string[]>([]);
+  const [rosterNotice, setRosterNotice] = useState<string | null>(null);
+  const [rosterFileName, setRosterFileName] = useState('');
+  const [isReadingRoster, setIsReadingRoster] = useState(false);
+  const [isImportingRoster, setIsImportingRoster] = useState(false);
+  const rosterFileInput = useRef<HTMLInputElement>(null);
+
+  const loadAccountRequests = async () => {
+    try {
+      const res = await fetch('/api/v1/auth/requests');
+      if (!res.ok) return;
+      const json = await res.json();
+      setAccountRequests(json.data || []);
+    } catch {
+      setRequestNotice('Account requests could not be loaded.');
+    }
+  };
+
+  const loadRegisteredStudents = async () => {
+    try {
+      const res = await fetch('/api/v1/students');
+      if (!res.ok) throw new Error('Student registry could not be loaded.');
+      const json = await res.json();
+      setRegisteredStudents(Array.isArray(json.data) ? json.data : []);
+    } catch {
+      setRosterNotice('Student registry could not be loaded. Refresh the page and try again.');
+    }
+  };
+
+  useEffect(() => {
+    loadAccountRequests();
+    loadRegisteredStudents();
+  }, []);
+
+  const handleRosterFile = async (file?: File) => {
+    setRosterNotice(null);
+    setRosterErrors([]);
+    setRosterPreview([]);
+    setRosterFileName(file?.name || '');
+    if (!file) return;
+    if (file.size > 1_500_000) {
+      setRosterErrors(['CSV file must be smaller than 1.5 MB.']);
+      return;
+    }
+
+    setIsReadingRoster(true);
+    try {
+      const result = await parseStudentRosterFile(file, registeredStudents.map(student => student.admissionNo));
+      setRosterPreview(result.students);
+      setRosterErrors(result.errors);
+    } catch {
+      setRosterErrors(['The CSV could not be read. Save it as a UTF-8 CSV file and try again.']);
+    } finally {
+      setIsReadingRoster(false);
+    }
+  };
+
+  const downloadRosterTemplate = () => {
+    const url = URL.createObjectURL(new Blob([STUDENT_ROSTER_TEMPLATE], { type: 'text/csv;charset=utf-8' }));
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'nduluni-student-roster-template.csv';
+    link.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const importRoster = async () => {
+    if (!rosterPreview.length || rosterErrors.length) return;
+    setIsImportingRoster(true);
+    setRosterNotice(null);
+    try {
+      const res = await fetch('/api/v1/students/import', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ students: rosterPreview })
+      });
+      const json = await res.json();
+      if (!res.ok) {
+        setRosterErrors(Array.isArray(json.errors) ? json.errors : [json.error || 'Roster import failed.']);
+        return;
+      }
+      setRosterNotice(`${json.added} student${json.added === 1 ? '' : 's'} added to the registry.`);
+      setRosterPreview([]);
+      setRosterFileName('');
+      if (rosterFileInput.current) rosterFileInput.current.value = '';
+      await loadRegisteredStudents();
+    } catch {
+      setRosterErrors(['The import service could not be reached. No students were imported.']);
+    } finally {
+      setIsImportingRoster(false);
+    }
+  };
+
+  const reviewAccountRequest = async (id: string, decision: 'APPROVED' | 'REJECTED') => {
+    const res = await fetch(`/api/v1/auth/requests/${id}/review`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ decision })
+    });
+    if (!res.ok) {
+      const json = await res.json();
+      setRequestNotice(json.error || 'The account request could not be reviewed.');
+      return;
+    }
+    setRequestNotice(decision === 'APPROVED' ? 'Account approved. The user can now sign in.' : 'Account request rejected.');
+    await loadAccountRequests();
+  };
 
   const handleBroadcast = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -32,8 +164,7 @@ export const PrincipalDashboard: React.FC = () => {
       const res = await fetch('/api/v1/sms/broadcast', {
         method: 'POST',
         headers: {
-          'Content-Type': 'application/json',
-          'x-user-role': 'PRINCIPAL'
+          'Content-Type': 'application/json'
         },
         body: JSON.stringify({
           message: broadcastMsg,
@@ -236,6 +367,161 @@ export const PrincipalDashboard: React.FC = () => {
           </div>
         </div>
       </div>
+
+      <section className="bg-white rounded-xl border border-stone-200 shadow-sm overflow-hidden">
+        <div className="p-5 sm:p-6 border-b border-stone-200 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-bold font-display text-stone-900 flex items-center gap-2">
+              <Users className="w-5 h-5 text-rose-900" /> Student Registry
+            </h2>
+            <p className="text-xs text-stone-500 mt-1">{registeredStudents.length.toLocaleString()} students currently registered</p>
+          </div>
+          <button
+            type="button"
+            onClick={downloadRosterTemplate}
+            className="px-3.5 py-2 text-xs font-semibold text-stone-800 bg-white border border-stone-300 hover:bg-stone-50 rounded-lg flex items-center justify-center gap-2"
+          >
+            <Download className="w-4 h-4" /> Download CSV template
+          </button>
+        </div>
+
+        <div className="p-5 sm:p-6 space-y-4">
+          <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+            <label className="px-4 py-2.5 text-xs font-semibold text-white bg-rose-950 hover:bg-rose-900 rounded-lg cursor-pointer inline-flex items-center justify-center gap-2">
+              <Upload className="w-4 h-4" /> Choose student CSV
+              <input
+                ref={rosterFileInput}
+                type="file"
+                accept=".csv,text/csv"
+                className="sr-only"
+                onChange={event => handleRosterFile(event.target.files?.[0])}
+              />
+            </label>
+            <span className="text-xs text-stone-500">{isReadingRoster ? 'Checking file…' : rosterFileName || 'CSV only · Maximum 1.5 MB'}</span>
+          </div>
+
+          <p className="text-xs text-stone-600">
+            Required columns: admissionNo, fullName, form, stream, guardianName, guardianPhone, currentTermBalance, subjectCodes. Separate subject codes with |. Codes: 101 English, 102 Kiswahili, 121 Mathematics, 231 Biology, 232 Physics, 233 Chemistry, 311 History, 312 Geography, 313 CRE, 443 Agriculture. Enter guardianPhone as 9 digits (724891230) or 10 digits (0724891230); the leading 0 is added automatically if missing. Optional: house, nemisUpi, kcpeMarks, attendanceRate, classTeacher. Use 0 as the balance when unknown. Existing admission numbers are never overwritten.
+          </p>
+
+          {rosterNotice && (
+            <div role="status" className="p-3 bg-emerald-50 border border-emerald-200 text-emerald-900 rounded-lg text-xs flex items-center gap-2">
+              <CheckCircle2 className="w-4 h-4 shrink-0" /> {rosterNotice}
+            </div>
+          )}
+
+          {rosterErrors.length > 0 && (
+            <div role="alert" className="p-3 bg-rose-50 border border-rose-200 text-rose-900 rounded-lg text-xs space-y-1 max-h-48 overflow-y-auto">
+              <strong>Fix these issues before importing:</strong>
+              <ul className="list-disc pl-5 space-y-1">
+                {rosterErrors.map((error, index) => <li key={`${index}-${error}`}>{error}</li>)}
+              </ul>
+            </div>
+          )}
+
+          {rosterPreview.length > 0 && (
+            <div className="space-y-3">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                <p className="text-sm font-semibold text-stone-800">Preview: {rosterPreview.length} valid student records</p>
+                <button
+                  type="button"
+                  onClick={importRoster}
+                  disabled={isImportingRoster || isReadingRoster || rosterErrors.length > 0}
+                  className="px-4 py-2.5 text-xs font-bold text-white bg-emerald-800 hover:bg-emerald-700 rounded-lg inline-flex items-center justify-center gap-2 disabled:opacity-50"
+                >
+                  {isImportingRoster ? <RefreshCw className="w-4 h-4 animate-spin" /> : <UserRoundPlus className="w-4 h-4" />}
+                  Import {rosterPreview.length} students
+                </button>
+              </div>
+              <div className="max-w-full overflow-x-auto border border-stone-200 rounded-lg">
+                <table className="w-full min-w-[850px] text-left text-xs">
+                  <thead className="bg-stone-900 text-white">
+                    <tr>
+                      <th className="px-3 py-2.5">Admission no.</th>
+                      <th className="px-3 py-2.5">Student name</th>
+                      <th className="px-3 py-2.5">Form / stream</th>
+                      <th className="px-3 py-2.5">Guardian</th>
+                      <th className="px-3 py-2.5">Phone</th>
+                      <th className="px-3 py-2.5">Subjects</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-stone-100">
+                    {rosterPreview.slice(0, 8).map(student => (
+                      <tr key={student.admissionNo}>
+                        <td className="px-3 py-2 font-mono">{student.admissionNo}</td>
+                        <td className="px-3 py-2 font-medium">{student.fullName}</td>
+                        <td className="px-3 py-2">Form {student.form} {student.stream}</td>
+                        <td className="px-3 py-2">{student.guardianName}</td>
+                        <td className="px-3 py-2 font-mono">{student.guardianPhone}</td>
+                        <td className="px-3 py-2 font-mono">{student.subjectCodes.join(', ')}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+                {rosterPreview.length > 8 && <p className="px-3 py-2 text-[11px] text-stone-500 bg-stone-50">Showing the first 8 records; all {rosterPreview.length} will be imported.</p>}
+              </div>
+            </div>
+          )}
+        </div>
+      </section>
+
+      <section className="bg-white rounded-xl border border-stone-200 shadow-sm">
+        <div className="p-5 sm:p-6 border-b border-stone-200 flex items-center justify-between gap-4">
+          <div>
+            <h2 className="text-lg font-bold font-display text-stone-900">Account Access Requests</h2>
+            <p className="text-xs text-stone-500 mt-1">Verify school identity before granting a role dashboard.</p>
+          </div>
+          <span className="px-2.5 py-1 rounded-full bg-amber-50 border border-amber-200 text-amber-900 text-xs font-semibold">
+            {accountRequests.filter(request => request.status === 'PENDING').length} pending
+          </span>
+        </div>
+
+        {requestNotice && (
+          <div className="mx-5 mt-4 p-3 bg-stone-50 border border-stone-200 rounded-lg text-xs text-stone-700">
+            {requestNotice}
+          </div>
+        )}
+
+        <div className="divide-y divide-stone-100">
+          {accountRequests.filter(request => request.status === 'PENDING').map(request => (
+            <div key={request.id} className="p-5 sm:px-6 flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h3 className="font-semibold text-sm text-stone-900">{request.name}</h3>
+                  <span className="px-2 py-0.5 rounded bg-stone-100 text-stone-700 text-[11px] font-semibold">{request.roleTitle}</span>
+                </div>
+                <p className="mt-1 text-xs text-stone-600">
+                  {request.username}
+                  {request.admissionNo && ` · Admission ${request.admissionNo}`}
+                  {request.tscNumber && ` · TSC ${request.tscNumber}`}
+                  {request.staffId && ` · Staff ID ${request.staffId}`}
+                  {request.department && ` · ${request.department}`}
+                </p>
+                <p className="mt-1 text-[11px] text-stone-500">
+                  {[request.phone, request.email].filter(Boolean).join(' · ') || 'No contact details'} · Submitted {new Date(request.requestedAt).toLocaleDateString()}
+                </p>
+              </div>
+              <div className="flex items-center gap-2 shrink-0">
+                <button
+                  onClick={() => reviewAccountRequest(request.id, 'REJECTED')}
+                  className="px-3 py-2 rounded-md border border-stone-300 text-stone-700 hover:bg-stone-50 text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <XCircle className="w-4 h-4" /> Reject
+                </button>
+                <button
+                  onClick={() => reviewAccountRequest(request.id, 'APPROVED')}
+                  className="px-3 py-2 rounded-md bg-emerald-800 text-white hover:bg-emerald-700 text-xs font-semibold flex items-center gap-1.5"
+                >
+                  <UserRoundCheck className="w-4 h-4" /> Approve account
+                </button>
+              </div>
+            </div>
+          ))}
+          {accountRequests.every(request => request.status !== 'PENDING') && (
+            <p className="p-6 text-sm text-stone-500">No account requests are awaiting review.</p>
+          )}
+        </div>
+      </section>
     </div>
   );
 };

@@ -5,11 +5,12 @@ export interface Student {
   form: number;
   stream: string;
   house: string;
+  enrolledSubjectCodes?: string[];
   guardianName: string;
   guardianPhone: string;
-  kcpeMarks: number;
+  kcpeMarks: number | null;
   currentTermBalance: number;
-  attendanceRate: number;
+  attendanceRate: number | null;
   avatarUrl?: string;
   classTeacher: string;
 }

@@ -1,27 +1,21 @@
 import React, { useState } from 'react';
-import { useAuth, PRESET_ROLES, UserRole } from '../context/AuthContext';
+import { useAuth, UserRole } from '../context/AuthContext';
 import { 
   Shield, 
   CreditCard, 
   Award, 
   GraduationCap, 
   Lock, 
-  Check, 
-  ArrowRight, 
   UserPlus, 
   LogIn, 
-  Key, 
-  Building2, 
-  User, 
   Phone, 
-  Mail, 
   CheckCircle2, 
   AlertCircle,
   RefreshCw
 } from 'lucide-react';
 
 export const AuthPortalModal: React.FC = () => {
-  const { currentUser, loginAsRole, registerAccount, isAuthModalOpen, setIsAuthModalOpen } = useAuth();
+  const { login, registerAccount, isAuthModalOpen, setIsAuthModalOpen } = useAuth();
   const [activeTab, setActiveTab] = useState<'signin' | 'register'>('signin');
 
   // Sign In Form State
@@ -41,7 +35,6 @@ export const AuthPortalModal: React.FC = () => {
   const [regTscNo, setRegTscNo] = useState('');
   const [regStaffId, setRegStaffId] = useState('');
   const [regDepartment, setRegDepartment] = useState('Mathematics');
-  const [regAuthKey, setRegAuthKey] = useState('');
   
   const [regError, setRegError] = useState<string | null>(null);
   const [regSuccess, setRegSuccess] = useState<string | null>(null);
@@ -59,26 +52,11 @@ export const AuthPortalModal: React.FC = () => {
     setLoginError(null);
 
     try {
-      const res = await fetch('/api/v1/auth/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          username: loginIdentifier.trim(),
-          password: loginPassword || 'password123'
-        })
-      });
-
-      const json = await res.json();
-      if (res.ok && json.success) {
-        // Find matching preset key or reload
-        const roleKey = json.user.role.toLowerCase().includes('principal') ? 'principal'
-          : json.user.role.toLowerCase().includes('bursar') ? 'bursar'
-          : json.user.role.toLowerCase().includes('teacher') ? 'teacher' : 'parent';
-        
-        await loginAsRole(roleKey as any);
+      const result = await login(loginIdentifier.trim(), loginPassword);
+      if (result.success) {
         setIsAuthModalOpen(false);
       } else {
-        setLoginError(json.error || 'Authentication failed. Please verify credentials.');
+        setLoginError(result.error || 'Authentication failed. Please verify credentials.');
       }
     } catch (err: any) {
       setLoginError('Communication error with authentication gateway.');
@@ -94,10 +72,7 @@ export const AuthPortalModal: React.FC = () => {
     setIsRegistering(true);
 
     try {
-      const res = await fetch('/api/v1/auth/register', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
+      const result = await registerAccount({
           role: regRole,
           name: regName,
           username: regUsername || (regAdmNo || regTscNo || regStaffId || regName.toLowerCase().replace(/\s+/g, '.')),
@@ -107,23 +82,13 @@ export const AuthPortalModal: React.FC = () => {
           admissionNo: regAdmNo,
           tscNumber: regTscNo,
           staffId: regStaffId,
-          department: regDepartment,
-          authorizationKey: regAuthKey
-        })
+          department: regDepartment
       });
 
-      const json = await res.json();
-      if (res.ok && json.success) {
-        setRegSuccess(`Account provisioned successfully for ${json.user.name} (${json.user.roleTitle})! Logging you in...`);
-        setTimeout(async () => {
-          const roleKey = regRole.toLowerCase().includes('principal') ? 'principal'
-            : regRole.toLowerCase().includes('bursar') ? 'bursar'
-            : regRole.toLowerCase().includes('teacher') ? 'teacher' : 'parent';
-          await loginAsRole(roleKey as any);
-          setIsAuthModalOpen(false);
-        }, 1200);
+      if (result.success) {
+        setRegSuccess('Request submitted. The school will verify your details and approve access. You can sign in once your account is approved.');
       } else {
-        setRegError(json.error || 'Registration failed. Check access requirements.');
+        setRegError(result.error || 'Registration failed. Check access requirements.');
       }
     } catch (err) {
       setRegError('Server error processing registration.');
@@ -189,97 +154,10 @@ export const AuthPortalModal: React.FC = () => {
         {/* TAB 1: SIGN IN & 1-CLICK ROLE SWITCHER */}
         {activeTab === 'signin' && (
           <div className="space-y-6">
-            {/* Quick 1-Click Institutional Demo Profiles */}
-            <div className="space-y-3">
-              <span className="text-xs uppercase tracking-wider text-stone-500 font-semibold block">
-                Instant 1-Click Role Switcher (Select to View Role Dashboard):
-              </span>
-
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {[
-                  {
-                    key: 'principal',
-                    role: 'PRINCIPAL',
-                    title: 'Chief Principal',
-                    subtitle: 'Mrs. Margaret M. Musyoka, OGW',
-                    badge: 'Executive Super Admin',
-                    badgeColor: 'bg-purple-100 text-purple-900 border-purple-300',
-                    icon: Shield
-                  },
-                  {
-                    key: 'bursar',
-                    role: 'BURSAR',
-                    title: 'Senior Bursar',
-                    subtitle: 'Mr. Julius Mutua',
-                    badge: 'Finance & M-Pesa Hub',
-                    badgeColor: 'bg-emerald-100 text-emerald-900 border-emerald-300',
-                    icon: CreditCard
-                  },
-                  {
-                    key: 'teacher',
-                    role: 'TEACHER',
-                    title: 'TSC Teacher (HOD)',
-                    subtitle: 'Mr. Dennis Ochieng (TSC #412093)',
-                    badge: 'Marks & Academic Desk',
-                    badgeColor: 'bg-amber-100 text-amber-900 border-amber-300',
-                    icon: Award
-                  },
-                  {
-                    key: 'parent',
-                    role: 'STUDENT_PARENT',
-                    title: 'Parent & Scholar',
-                    subtitle: 'Patrick Musyoki / Brian Mutua',
-                    badge: 'Report Card & Fees',
-                    badgeColor: 'bg-sky-100 text-sky-900 border-sky-300',
-                    icon: GraduationCap
-                  }
-                ].map((item) => {
-                  const Icon = item.icon;
-                  const isSelected = currentUser.role === item.role;
-
-                  return (
-                    <div
-                      key={item.key}
-                      onClick={async () => {
-                        await loginAsRole(item.key as any);
-                        setIsAuthModalOpen(false);
-                      }}
-                      className={`p-3.5 rounded-xl border transition-all cursor-pointer flex items-center justify-between ${
-                        isSelected
-                          ? 'border-rose-950 bg-rose-50/60 ring-2 ring-rose-900/20 shadow-xs'
-                          : 'border-stone-200 hover:border-stone-400 hover:bg-stone-50'
-                      }`}
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-9 h-9 rounded-lg bg-stone-900 text-amber-400 flex items-center justify-center shrink-0">
-                          <Icon className="w-4 h-4" />
-                        </div>
-                        <div className="space-y-0.5">
-                          <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-xs text-stone-900">{item.title}</span>
-                            <span className={`px-1.5 py-0.2 rounded text-[9px] font-semibold border ${item.badgeColor}`}>
-                              {item.badge}
-                            </span>
-                          </div>
-                          <p className="text-[11px] text-stone-500 font-medium">{item.subtitle}</p>
-                        </div>
-                      </div>
-
-                      {isSelected && (
-                        <span className="w-5 h-5 rounded-full bg-rose-950 text-white flex items-center justify-center text-xs">
-                          ✓
-                        </span>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
             {/* Standard Credentials Sign In Form */}
-            <form onSubmit={handleManualLogin} className="space-y-4 pt-4 border-t border-stone-200 text-xs">
-              <span className="text-xs uppercase tracking-wider text-stone-500 font-semibold block">
-                Or Sign In with Individual Staff ID / Admission Number:
+            <form onSubmit={handleManualLogin} className="space-y-4 text-xs">
+                  <span className="text-xs uppercase tracking-wider text-stone-500 font-semibold block">
+                Sign in with your approved school account:
               </span>
 
               {loginError && (
@@ -310,7 +188,8 @@ export const AuthPortalModal: React.FC = () => {
                   </label>
                   <input
                     type="password"
-                    placeholder="Default demo pass: password123"
+                    required
+                    placeholder="Enter your password"
                     value={loginPassword}
                     onChange={(e) => setLoginPassword(e.target.value)}
                     className="w-full px-3 py-2 rounded-lg border border-stone-300 bg-stone-50 focus:outline-none focus:ring-1 focus:ring-rose-900"
@@ -354,10 +233,9 @@ export const AuthPortalModal: React.FC = () => {
               </label>
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {[
-                  { role: 'STUDENT_PARENT' as UserRole, label: 'Parent / Scholar', icon: GraduationCap },
-                  { role: 'TEACHER' as UserRole, label: 'TSC Teacher', icon: Award },
-                  { role: 'BURSAR' as UserRole, label: 'Bursar / Accounts', icon: CreditCard },
-                  { role: 'PRINCIPAL' as UserRole, label: 'Chief Principal', icon: Shield }
+                  { role: 'STUDENT_PARENT' as UserRole, label: 'Parent / Student', icon: GraduationCap },
+                  { role: 'TEACHER' as UserRole, label: 'Teacher', icon: Award },
+                  { role: 'BURSAR' as UserRole, label: 'Bursar / Accounts', icon: CreditCard }
                 ].map((item) => {
                   const Icon = item.icon;
                   const isSelected = regRole === item.role;
@@ -466,40 +344,9 @@ export const AuthPortalModal: React.FC = () => {
                       className="w-full px-3 py-1.5 rounded-lg border border-stone-300 bg-white font-mono"
                     />
                   </div>
-                  <div>
-                    <label className="block font-semibold text-stone-700 mb-1">
-                      Finance Dept Passkey <span className="text-rose-700">*</span>
-                    </label>
-                    <input
-                      type="text"
-                      required
-                      placeholder="Passkey: BURSAR_FINANCE_2026"
-                      value={regAuthKey}
-                      onChange={(e) => setRegAuthKey(e.target.value)}
-                      className="w-full px-3 py-1.5 rounded-lg border border-stone-300 bg-white font-mono font-bold"
-                    />
-                  </div>
                 </div>
               )}
-
-              {regRole === 'PRINCIPAL' && (
-                <div className="space-y-2">
-                  <label className="block font-semibold text-stone-700">
-                    BOM / Ministry of Education Authorization Passkey <span className="text-rose-700">*</span>
-                  </label>
-                  <input
-                    type="text"
-                    required
-                    placeholder="Enter clearance key (Hint: BOM_NDULUNI_2026)"
-                    value={regAuthKey}
-                    onChange={(e) => setRegAuthKey(e.target.value)}
-                    className="w-full px-3 py-1.5 rounded-lg border border-stone-300 bg-white font-mono font-bold"
-                  />
-                  <p className="text-[10px] text-stone-500">
-                    Restricted executive clearance required to authorize exam result publishing and school mass SMS dispatches.
-                  </p>
-                </div>
-              )}
+              <p className="text-[11px] text-stone-500">Staff access is activated by the Principal after school records are checked. Principal accounts are created by the school, not through public registration.</p>
             </div>
 
             {/* Step 3: Account Personal Details */}
@@ -540,7 +387,8 @@ export const AuthPortalModal: React.FC = () => {
               <input
                 type="password"
                 required
-                placeholder="Choose a secure password"
+                  minLength={12}
+                  placeholder="At least 12 characters"
                 value={regPassword}
                 onChange={(e) => setRegPassword(e.target.value)}
                 className="w-full px-3 py-1.5 rounded-lg border border-stone-300 bg-white"

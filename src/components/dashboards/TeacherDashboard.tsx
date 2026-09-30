@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
-import { INITIAL_STUDENTS } from '../../data/mockData';
 import { generateClassBroadsheetPDF, generateStudentReportPDF } from '../../utils/pdfGenerator';
+import { SCHOOL_SUBJECTS } from '../../data/subjects';
 import { 
   Award, 
   BookOpen, 
@@ -21,10 +21,13 @@ import {
 
 export const TeacherDashboard: React.FC = () => {
   const { currentUser } = useAuth();
-  const [students, setStudents] = useState<any[]>(INITIAL_STUDENTS);
+  const [students, setStudents] = useState<any[]>([]);
   const [selectedForm, setSelectedForm] = useState(3);
-  const [selectedStream, setSelectedStream] = useState('West');
-  const [selectedSubjectCode, setSelectedSubjectCode] = useState('121'); // Mathematics Alt A
+  const [selectedStream, setSelectedStream] = useState('');
+  const [selectedSubjectCode, setSelectedSubjectCode] = useState('121');
+  const [searchTerm, setSearchTerm] = useState('');
+  const [isLoading, setIsLoading] = useState(true);
+  const [loadError, setLoadError] = useState<string | null>(null);
 
   // Mark Entry Modal State
   const [activeEditingStudent, setActiveEditingStudent] = useState<any | null>(null);
@@ -34,16 +37,25 @@ export const TeacherDashboard: React.FC = () => {
   const [remarks, setRemarks] = useState('Superb analytical solving speed.');
   const [isSaving, setIsSaving] = useState(false);
   const [saveSuccessMsg, setSaveSuccessMsg] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+
+  const subjectOptions = currentUser.department
+    ? SCHOOL_SUBJECTS.filter(subject => subject.department.toLowerCase() === currentUser.department?.toLowerCase())
+    : SCHOOL_SUBJECTS;
 
   const loadStudents = async () => {
+    setIsLoading(true);
+    setLoadError(null);
     try {
       const res = await fetch('/api/v1/students');
-      if (res.ok) {
-        const json = await res.json();
-        if (json.data) setStudents(json.data);
-      }
-    } catch (e) {
-      console.log('Using in-memory students');
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Could not load the class roster.');
+      setStudents(Array.isArray(json.data) ? json.data : []);
+    } catch (error) {
+      setStudents([]);
+      setLoadError(error instanceof Error ? error.message : 'Could not load the class roster.');
+    } finally {
+      setIsLoading(false);
     }
   };
 
@@ -51,19 +63,32 @@ export const TeacherDashboard: React.FC = () => {
     loadStudents();
   }, []);
 
+  useEffect(() => {
+    if (!subjectOptions.some(subject => subject.code === selectedSubjectCode)) {
+      setSelectedSubjectCode(subjectOptions[0]?.code || '');
+    }
+  }, [currentUser.department]);
+
   const openMarkEditor = (student: any) => {
     setActiveEditingStudent(student);
-    const subj = student.subjects.find((s: any) => s.code === selectedSubjectCode) || student.subjects[0];
-    setCat1(subj.cat1 || 24);
-    setCat2(subj.cat2 || 25);
-    setEndTerm(subj.endTerm || 33);
-    setRemarks(subj.teacherRemarks || 'Satisfactory progress.');
+    const subject = student.subjects?.find((item: any) => item.code === selectedSubjectCode);
+    if (!subject) {
+      setActiveEditingStudent(null);
+      setActionError('This student is not enrolled in the selected subject.');
+      return;
+    }
+    setCat1(subject.cat1 ?? 0);
+    setCat2(subject.cat2 ?? 0);
+    setEndTerm(subject.endTerm ?? 0);
+    setRemarks(subject.teacherRemarks || 'Satisfactory progress.');
+    setActionError(null);
   };
 
   const handleSaveMarks = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!activeEditingStudent) return;
     setIsSaving(true);
+    setActionError(null);
 
     try {
       const res = await fetch(`/api/v1/students/${encodeURIComponent(activeEditingStudent.admissionNo)}/marks`, {
@@ -81,24 +106,41 @@ export const TeacherDashboard: React.FC = () => {
         })
       });
 
-      if (res.ok) {
-        const json = await res.json();
-        setSaveSuccessMsg(`Marks saved for ${activeEditingStudent.fullName}! Recalculated Mean: ${json.data.termSummary.meanGrade} (${json.data.termSummary.totalPoints} pts).`);
-        await loadStudents();
-        setActiveEditingStudent(null);
-      } else {
-        alert('Failed to save marks. Check inputs.');
-      }
-    } catch (err) {
-      setSaveSuccessMsg(`Marks updated for ${activeEditingStudent.fullName}.`);
+      const json = await res.json();
+      if (!res.ok) throw new Error(json.error || 'Failed to save marks.');
+      setSaveSuccessMsg(`Marks saved for ${activeEditingStudent.fullName}. Recalculated mean: ${json.data.termSummary.meanGrade} (${json.data.termSummary.totalPoints} points).`);
+      await loadStudents();
       setActiveEditingStudent(null);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : 'Could not save marks. Check your connection and try again.');
     } finally {
       setIsSaving(false);
       setTimeout(() => setSaveSuccessMsg(null), 4000);
     }
   };
 
-  const filteredStudents = students.filter(s => s.form === selectedForm);
+  const streamsForForm = [...new Set(students
+    .filter(student => Number(student.form) === selectedForm)
+    .map(student => student.stream))].sort();
+  const filteredStudents = students.filter(student =>
+    Number(student.form) === selectedForm &&
+    (!selectedStream || student.stream === selectedStream) &&
+    (!searchTerm || `${student.fullName} ${student.admissionNo}`.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+  const studentsWithSelectedSubject = filteredStudents.filter(student =>
+    student.enrolledSubjectCodes?.includes(selectedSubjectCode) ||
+    student.subjects?.some((subject: any) => subject.code === selectedSubjectCode)
+  );
+  const selectedSubjectStudents = studentsWithSelectedSubject.map(student =>
+    student.subjects.find((subject: any) => subject.code === selectedSubjectCode)
+  ).filter(Boolean);
+  const marksEntered = selectedSubjectStudents.filter(subject =>
+    subject.grade !== 'Not graded' && Number.isFinite(subject.cat1) && Number.isFinite(subject.cat2) && Number.isFinite(subject.endTerm)
+  ).length;
+  const gradedSubjectStudents = selectedSubjectStudents.filter(subject => subject.grade !== 'Not graded');
+  const subjectMean = gradedSubjectStudents.length
+    ? (gradedSubjectStudents.reduce((total, subject) => total + subject.score, 0) / gradedSubjectStudents.length).toFixed(1)
+    : null;
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
@@ -122,8 +164,9 @@ export const TeacherDashboard: React.FC = () => {
 
           <div className="flex flex-wrap items-center gap-3">
             <button
-              onClick={() => generateClassBroadsheetPDF(selectedForm, selectedStream, filteredStudents, selectedSubjectCode)}
-              className="px-4 py-2.5 text-xs font-bold text-stone-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-all flex items-center gap-1.5 shadow-sm cursor-pointer hover:scale-102"
+              onClick={() => generateClassBroadsheetPDF(selectedForm, selectedStream, studentsWithSelectedSubject, selectedSubjectCode)}
+              disabled={studentsWithSelectedSubject.length === 0}
+              className="px-4 py-2.5 text-xs font-bold text-stone-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-all flex items-center gap-1.5 shadow-sm cursor-pointer hover:scale-102 disabled:opacity-50 disabled:cursor-not-allowed"
               title="Generate printable PDF broadsheet with KNEC mean score statistics"
             >
               <Download className="w-4 h-4 text-stone-950" />
@@ -154,31 +197,43 @@ export const TeacherDashboard: React.FC = () => {
           <span className="font-semibold">{saveSuccessMsg}</span>
         </div>
       )}
+      {actionError && (
+        <div role="alert" className="p-4 bg-rose-50 border border-rose-200 text-rose-900 text-xs rounded-xl flex items-center gap-2">
+          <AlertCircle className="w-4 h-4 text-rose-700 shrink-0" />
+          <span className="font-semibold">{actionError}</span>
+        </div>
+      )}
+      {loadError && (
+        <div role="alert" className="p-4 bg-rose-50 border border-rose-200 text-rose-900 text-xs rounded-xl flex items-center justify-between gap-3">
+          <span className="flex items-center gap-2"><AlertCircle className="w-4 h-4 shrink-0" />{loadError}</span>
+          <button onClick={loadStudents} className="font-semibold underline">Retry</button>
+        </div>
+      )}
 
       {/* Faculty Workload KPI Overview */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="p-5 bg-white rounded-xl border border-stone-200 shadow-sm space-y-1">
-          <span className="text-xs uppercase text-stone-500 font-medium">Assigned Class</span>
-          <div className="text-2xl font-bold font-display text-stone-900">Form 3 West</div>
-          <p className="text-xs text-stone-500">58 Enrolled Candidates · Kilimanjaro House</p>
+          <span className="text-xs uppercase text-stone-500 font-medium">Selected Class</span>
+          <div className="text-2xl font-bold font-display text-stone-900">Form {selectedForm} {selectedStream || 'All Streams'}</div>
+          <p className="text-xs text-stone-500">{filteredStudents.length} candidates in this view</p>
         </div>
 
         <div className="p-5 bg-white rounded-xl border border-stone-200 shadow-sm space-y-1">
-          <span className="text-xs uppercase text-stone-500 font-medium">Teaching Subject Allocation</span>
-          <div className="text-2xl font-bold font-display text-rose-950">Mathematics Alt A (121)</div>
-          <p className="text-xs text-stone-500">Form 3 & Form 4 Candidates</p>
+          <span className="text-xs uppercase text-stone-500 font-medium">Teaching Subject</span>
+          <div className="text-xl font-bold font-display text-rose-950">{subjectOptions.find(subject => subject.code === selectedSubjectCode)?.name || 'No subject assigned'}</div>
+          <p className="text-xs text-stone-500">Subject code {selectedSubjectCode || '—'}</p>
         </div>
 
         <div className="p-5 bg-white rounded-xl border border-stone-200 shadow-sm space-y-1">
-          <span className="text-xs uppercase text-stone-500 font-medium">Marks Upload Progress</span>
-          <div className="text-2xl font-bold font-mono text-emerald-800">100% Complete</div>
-          <p className="text-xs text-stone-500">CAT 1, CAT 2 & End Term Submitted</p>
+          <span className="text-xs uppercase text-stone-500 font-medium">Marks Entered</span>
+          <div className="text-2xl font-bold font-mono text-emerald-800">{marksEntered} / {selectedSubjectStudents.length}</div>
+          <p className="text-xs text-stone-500">For the selected class and subject</p>
         </div>
 
         <div className="p-5 bg-white rounded-xl border border-stone-200 shadow-sm space-y-1">
           <span className="text-xs uppercase text-stone-500 font-medium">Subject Mean Score</span>
-          <div className="text-2xl font-bold font-mono text-stone-900">82.4% (Grade A)</div>
-          <p className="text-xs text-stone-500">Target KCSE Mean: 11.2 Points</p>
+          <div className="text-2xl font-bold font-mono text-stone-900">{subjectMean === null ? '—' : `${subjectMean}%`}</div>
+          <p className="text-xs text-stone-500">Based on students enrolled in this subject</p>
         </div>
       </div>
 
@@ -206,7 +261,21 @@ export const TeacherDashboard: React.FC = () => {
             </div>
           </div>
 
-          <div className="pl-4 border-l border-stone-200">
+          <div>
+            <label className="block text-[11px] uppercase tracking-wider text-stone-500 font-semibold mb-1">
+              Select Stream:
+            </label>
+            <select
+              value={selectedStream}
+              onChange={(e) => setSelectedStream(e.target.value)}
+              className="px-3 py-1.5 rounded-lg border border-stone-300 bg-stone-50 text-xs font-semibold"
+            >
+              <option value="">All streams</option>
+              {streamsForForm.map(stream => <option key={stream} value={stream}>{stream}</option>)}
+            </select>
+          </div>
+
+          <div>
             <label className="block text-[11px] uppercase tracking-wider text-stone-500 font-semibold mb-1">
               Select Subject:
             </label>
@@ -215,20 +284,26 @@ export const TeacherDashboard: React.FC = () => {
               onChange={(e) => setSelectedSubjectCode(e.target.value)}
               className="px-3 py-1.5 rounded-lg border border-stone-300 bg-stone-50 text-xs font-semibold"
             >
-              <option value="121">121 - Mathematics Alternative A</option>
-              <option value="101">101 - English Language</option>
-              <option value="102">102 - Kiswahili Lugha</option>
-              <option value="231">231 - Biology</option>
-              <option value="232">232 - Physics</option>
-              <option value="233">233 - Chemistry</option>
-              <option value="311">311 - History & Government</option>
-              <option value="443">443 - Agriculture</option>
+              {subjectOptions.map(subject => (
+                <option key={subject.code} value={subject.code}>{subject.code} - {subject.name}</option>
+              ))}
             </select>
+          </div>
+
+          <div className="relative min-w-[220px] flex-1">
+            <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
+            <input
+              type="search"
+              value={searchTerm}
+              onChange={event => setSearchTerm(event.target.value)}
+              placeholder="Search name or admission number"
+              className="w-full pl-9 pr-3 py-1.5 rounded-lg border border-stone-300 bg-stone-50 text-xs"
+            />
           </div>
         </div>
 
         <div className="text-xs text-stone-500">
-          Showing <strong>{filteredStudents.length} candidates</strong> in Form {selectedForm}
+          {isLoading ? 'Loading class roster…' : <>Showing <strong>{filteredStudents.length} candidates</strong></>}
         </div>
       </div>
 
@@ -262,28 +337,27 @@ export const TeacherDashboard: React.FC = () => {
               </tr>
             </thead>
             <tbody className="divide-y divide-stone-200">
-              {filteredStudents.map((std) => {
-                const sub = std.subjects.find((s: any) => s.code === selectedSubjectCode) || std.subjects[0];
+              {!isLoading && filteredStudents.map((std) => {
+                const sub = std.subjects?.find((subject: any) => subject.code === selectedSubjectCode);
+                const isEnrolled = Boolean(std.enrolledSubjectCodes?.includes(selectedSubjectCode) || sub);
                 return (
                   <tr key={std.id} className="hover:bg-stone-50">
                     <td className="py-2.5 px-3 font-mono font-bold text-stone-700">{std.admissionNo}</td>
                     <td className="py-2.5 px-3 font-semibold text-stone-900">{std.fullName}</td>
-                    <td className="py-2.5 px-3 text-center font-mono">{sub.cat1 || 24}</td>
-                    <td className="py-2.5 px-3 text-center font-mono">{sub.cat2 || 25}</td>
-                    <td className="py-2.5 px-3 text-center font-mono">{sub.endTerm || 33}</td>
+                    <td className="py-2.5 px-3 text-center font-mono">{sub?.cat1 ?? '—'}</td>
+                    <td className="py-2.5 px-3 text-center font-mono">{sub?.cat2 ?? '—'}</td>
+                    <td className="py-2.5 px-3 text-center font-mono">{sub?.endTerm ?? '—'}</td>
                     <td className="py-2.5 px-3 text-center font-mono font-bold text-rose-950 text-sm">
-                      {sub.score}%
+                      {sub ? `${sub.score}%` : '—'}
                     </td>
                     <td className="py-2.5 px-3 text-center">
-                      <span className="px-2 py-0.5 rounded font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">
-                        {sub.grade}
-                      </span>
+                      {sub ? <span className="px-2 py-0.5 rounded font-bold bg-emerald-50 text-emerald-800 border border-emerald-200">{sub.grade}</span> : isEnrolled ? 'Not graded' : 'Not enrolled'}
                     </td>
                     <td className="py-2.5 px-3 text-center font-mono font-bold text-stone-900">
-                      {sub.points}
+                      {sub?.points ?? '—'}
                     </td>
                     <td className="py-2.5 px-3 italic text-stone-600 truncate max-w-xs">
-                      {sub.teacherRemarks}
+                      {sub?.teacherRemarks || '—'}
                     </td>
                     <td className="py-2.5 px-3 text-right">
                       <div className="flex items-center justify-end gap-1.5">
@@ -303,7 +377,7 @@ export const TeacherDashboard: React.FC = () => {
                               openingDate: '04 May 2026',
                               classTeacherComment: std.termSummary?.classTeacherComment || 'Consistent academic discipline and aptitude.',
                               principalComment: std.termSummary?.principalComment || 'Keep striving for the highest honors in KCSE.',
-                              subjects: std.subjects || [sub]
+                              subjects: std.subjects || []
                             };
                             generateStudentReportPDF(std, reportPayload);
                           }}
@@ -316,7 +390,8 @@ export const TeacherDashboard: React.FC = () => {
 
                         <button
                           onClick={() => openMarkEditor(std)}
-                          className="px-2.5 py-1 text-xs font-semibold text-rose-900 bg-rose-50 border border-rose-200 rounded hover:bg-rose-100 transition-colors flex items-center gap-1 cursor-pointer"
+                          disabled={!isEnrolled}
+                          className="px-2.5 py-1 text-xs font-semibold text-rose-900 bg-rose-50 border border-rose-200 rounded hover:bg-rose-100 transition-colors flex items-center gap-1 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
                         >
                           <Edit3 className="w-3 h-3" />
                           <span>Edit</span>
@@ -326,6 +401,9 @@ export const TeacherDashboard: React.FC = () => {
                   </tr>
                 );
               })}
+              {!isLoading && filteredStudents.length === 0 && (
+                <tr><td colSpan={10} className="py-10 px-4 text-center text-sm text-stone-500">No students match these class and search filters.</td></tr>
+              )}
             </tbody>
           </table>
         </div>

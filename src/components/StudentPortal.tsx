@@ -3,6 +3,7 @@ import { Student, TermReport } from '../types';
 import { SCHOOL_INFO, INITIAL_STUDENTS, MOCK_TERM_REPORT, TIMETABLE_SAMPLE } from '../data/mockData';
 import { generateStudentReportPDF, generateFeeStatementPDF } from '../utils/pdfGenerator';
 import { LibraryPortal } from './LibraryPortal';
+import { useAuth } from '../context/AuthContext';
 import { 
   GraduationCap, 
   Printer, 
@@ -27,18 +28,20 @@ import {
 } from 'lucide-react';
 
 interface StudentPortalProps {
+  admissionNo?: string;
   onNavigateToFees: (admissionNo?: string) => void;
 }
 
-export const StudentPortal: React.FC<StudentPortalProps> = ({ onNavigateToFees }) => {
-  const [selectedStudent, setSelectedStudent] = useState<Student>(INITIAL_STUDENTS[0]);
-  const [searchAdm, setSearchAdm] = useState('');
+export const StudentPortal: React.FC<StudentPortalProps> = ({ admissionNo, onNavigateToFees }) => {
+  const { currentUser } = useAuth();
+  const linkedAdmissionNo = admissionNo || currentUser.admissionNo;
+  const linkedStudent = INITIAL_STUDENTS.find(student => student.admissionNo === linkedAdmissionNo);
+  const initialStudent = linkedStudent || INITIAL_STUDENTS[0];
+  const [selectedStudent, setSelectedStudent] = useState<Student>(initialStudent);
   const [activeTab, setActiveTab] = useState<'report' | 'timetable' | 'attendance' | 'library' | 'resources' | 'grading'>('report');
   const [reportData, setReportData] = useState<TermReport>(MOCK_TERM_REPORT);
-  const [searchMessage, setSearchMessage] = useState<string | null>(null);
 
-  // Teacher Marks Editing State
-  const [isTeacherMode, setIsTeacherMode] = useState(false);
+  const isTeacherMode = false;
   const [editingSubject, setEditingSubject] = useState<{
     code: string;
     name: string;
@@ -107,24 +110,10 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ onNavigateToFees }
   };
 
   useEffect(() => {
-    fetchStudentData(selectedStudent.admissionNo);
-  }, [selectedStudent.admissionNo]);
-
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!searchAdm.trim()) return;
-    const found = INITIAL_STUDENTS.find(s => 
-      s.admissionNo.toLowerCase().includes(searchAdm.trim().toLowerCase()) ||
-      s.fullName.toLowerCase().includes(searchAdm.trim().toLowerCase())
-    );
-    if (found) {
-      setSelectedStudent(found);
-      setSearchMessage(null);
-      fetchStudentData(found.admissionNo);
-    } else {
-      setSearchMessage(`No student record found matching "${searchAdm}". Try selecting one of the enrolled demo students below.`);
+    if (linkedAdmissionNo && selectedStudent.admissionNo === linkedAdmissionNo) {
+      fetchStudentData(linkedAdmissionNo);
     }
-  };
+  }, [selectedStudent.admissionNo]);
 
   const handleSaveMarks = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -204,6 +193,15 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ onNavigateToFees }
     return 'text-rose-700 bg-rose-50 border-rose-200';
   };
 
+  if (!linkedAdmissionNo || selectedStudent.admissionNo !== linkedAdmissionNo) {
+    return (
+      <section className="max-w-xl mx-auto px-4 py-20 text-center space-y-3">
+        <h1 className="text-2xl font-bold font-display text-stone-900">Student record unavailable</h1>
+        <p className="text-sm text-stone-600">This account is not linked to a current student record. Contact the school office to verify the admission details.</p>
+      </section>
+    );
+  }
+
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
       {/* Portal Header */}
@@ -225,19 +223,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ onNavigateToFees }
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
-            {/* Teacher Grading Mode Toggle */}
-            <button
-              onClick={() => setIsTeacherMode(!isTeacherMode)}
-              className={`px-3.5 py-2.5 text-xs font-semibold rounded-lg transition-colors flex items-center gap-2 shadow-sm cursor-pointer ${
-                isTeacherMode
-                  ? 'bg-amber-400 text-stone-950 font-bold'
-                  : 'bg-stone-800 text-stone-200 hover:bg-stone-700'
-              }`}
-            >
-              <SlidersHorizontal className="w-4 h-4" />
-              <span>{isTeacherMode ? 'Teacher Mode: Active' : 'Enable Teacher Mode'}</span>
-            </button>
-
             <button
               onClick={() => generateStudentReportPDF(selectedStudent, reportData)}
               className="px-4 py-2.5 text-xs font-bold text-stone-950 bg-amber-400 hover:bg-amber-300 rounded-lg transition-colors flex items-center justify-center gap-2 shadow-sm cursor-pointer hover:scale-102 active:scale-98"
@@ -285,63 +270,10 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ onNavigateToFees }
         </div>
       )}
 
-      {/* Student Selector & Switcher Bar */}
-      <div className="no-print bg-white p-5 rounded-xl border border-stone-200 shadow-sm space-y-4">
-        <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <span className="text-xs uppercase tracking-wider text-stone-500 font-medium">
-              Active Student Record
-            </span>
-            <div className="flex flex-wrap items-center gap-2">
-              {INITIAL_STUDENTS.map((student) => (
-                <button
-                  key={student.id}
-                  onClick={() => {
-                    setSelectedStudent(student);
-                    setSearchMessage(null);
-                    fetchStudentData(student.admissionNo);
-                  }}
-                  className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all cursor-pointer flex items-center gap-2 ${
-                    selectedStudent.id === student.id
-                      ? 'bg-rose-950 text-white shadow-sm'
-                      : 'bg-stone-100 text-stone-700 hover:bg-stone-200'
-                  }`}
-                >
-                  <User className="w-3.5 h-3.5" />
-                  <span>{student.fullName} ({student.admissionNo})</span>
-                  <span className="opacity-75 text-[11px]">Form {student.form}</span>
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Quick Search */}
-          <form onSubmit={handleSearch} className="flex items-center gap-2 max-w-sm w-full">
-            <div className="relative flex-1">
-              <Search className="w-4 h-4 text-stone-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search Adm No (e.g. 3412)..."
-                value={searchAdm}
-                onChange={(e) => setSearchAdm(e.target.value)}
-                className="w-full pl-9 pr-3 py-1.5 text-xs rounded-lg border border-stone-300 focus:outline-none focus:ring-1 focus:ring-rose-900 bg-stone-50"
-              />
-            </div>
-            <button
-              type="submit"
-              className="px-3 py-1.5 text-xs font-medium text-white bg-stone-800 hover:bg-stone-900 rounded-lg cursor-pointer"
-            >
-              Verify
-            </button>
-          </form>
-        </div>
-
-        {searchMessage && (
-          <div className="p-3 bg-amber-50 border border-amber-200 text-amber-800 text-xs rounded-lg flex items-center gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-amber-600" />
-            <span>{searchMessage}</span>
-          </div>
-        )}
+      {/* Student records are fixed to the student linked to the signed-in account. */}
+      <div className="no-print bg-white p-5 rounded-xl border border-stone-200 shadow-sm">
+        <span className="text-xs uppercase tracking-wider text-stone-500 font-medium">Your linked student record</span>
+        <p className="mt-1 text-sm font-semibold text-stone-900">{selectedStudent.fullName} <span className="font-mono font-normal text-stone-500">· {selectedStudent.admissionNo}</span></p>
       </div>
 
       {/* Selected Student Profile Banner */}
@@ -485,12 +417,6 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ onNavigateToFees }
             <Edit3 className="w-4 h-4 text-amber-700" />
             <span><strong>Teacher Grading Mode Enabled:</strong> Click the edit icon on any subject row below to modify CAT 1, CAT 2, and End-Term scores. All calculations update directly in the database.</span>
           </div>
-          <button 
-            onClick={() => setIsTeacherMode(false)}
-            className="text-amber-800 font-bold hover:underline cursor-pointer"
-          >
-            Exit Teacher Mode
-          </button>
         </div>
       )}
 
@@ -538,7 +464,7 @@ export const StudentPortal: React.FC<StudentPortalProps> = ({ onNavigateToFees }
             </div>
             <div>
               <span className="text-stone-500 block">KCPE Entry Marks:</span>
-              <strong className="text-stone-900 font-mono">{selectedStudent.kcpeMarks} / 500</strong>
+              <strong className="text-stone-900 font-mono">{selectedStudent.kcpeMarks === null ? 'Not recorded' : `${selectedStudent.kcpeMarks} / 500`}</strong>
             </div>
             <div>
               <span className="text-stone-500 block">Stream Position:</span>

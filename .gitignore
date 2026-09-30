@@ -6,3 +6,5 @@ coverage/
 *.log
 .env*
 !.env.example
+src/server/auth_accounts.json
+src/server/data_store.json

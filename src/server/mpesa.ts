@@ -5,6 +5,7 @@ export interface StkPushRequest {
   phoneNumber: string; // 2547XXXXXXXX or 07XXXXXXXX
   amount: number;
   admissionNo: string;
+  initiatedBy: string;
 }
 
 export interface StkPushResponse {
@@ -17,6 +18,13 @@ export interface StkPushResponse {
 
 export class MpesaService {
   private shortCode = process.env.MPESA_PAYBILL || '522123';
+  private pendingPayments = new Map<string, {
+    admissionNo: string;
+    amount: number;
+    phoneNumber: string;
+    initiatedBy: string;
+    expiresAt: number;
+  }>();
 
   // Normalize phone number to standard 2547XXXXXXXX or 2541XXXXXXXX
   formatPhoneNumber(phone: string): string {
@@ -32,8 +40,29 @@ export class MpesaService {
   // Trigger STK Push (Real Daraja Simulator / Gateway)
   async initiateStkPush(params: StkPushRequest): Promise<StkPushResponse> {
     const formattedPhone = this.formatPhoneNumber(params.phoneNumber);
+    const student = db.getStudentByAdmission(params.admissionNo);
+    if (!student) throw new Error('Student record not found.');
+    if (!Number.isSafeInteger(params.amount) || params.amount <= 0 || params.amount > student.currentTermBalance) {
+      throw new Error('Payment amount must be a positive whole number no greater than the current balance.');
+    }
+    if (!/^254[17]\d{8}$/.test(formattedPhone)) {
+      throw new Error('Enter a valid Kenyan mobile number.');
+    }
+
+    const now = Date.now();
+    for (const [id, payment] of this.pendingPayments) {
+      if (payment.expiresAt <= now) this.pendingPayments.delete(id);
+    }
+
     const checkoutRequestId = `ws_CO_${Date.now()}_${Math.floor(100000 + Math.random() * 900000)}`;
     const merchantRequestId = `291-729-1-${Date.now()}`;
+    this.pendingPayments.set(checkoutRequestId, {
+      admissionNo: student.admissionNo,
+      amount: params.amount,
+      phoneNumber: formattedPhone,
+      initiatedBy: params.initiatedBy,
+      expiresAt: now + 10 * 60 * 1000
+    });
 
     // Return instant Daraja payload structure
     return {
@@ -52,10 +81,26 @@ export class MpesaService {
     amount: number;
     phoneNumber: string;
     mpesaReceiptNumber?: string;
+    initiatedBy: string;
   }): Promise<{ success: boolean; transaction: PaymentTransactionRecord; student: any }> {
+    const pending = this.pendingPayments.get(data.checkoutRequestId);
+    if (!pending || pending.expiresAt <= Date.now()) {
+      this.pendingPayments.delete(data.checkoutRequestId);
+      throw new Error('Payment request is missing, expired, or already confirmed.');
+    }
+    if (pending.initiatedBy !== data.initiatedBy ||
+        pending.admissionNo !== data.admissionNo ||
+        pending.amount !== data.amount ||
+        pending.phoneNumber !== this.formatPhoneNumber(data.phoneNumber)) {
+      throw new Error('Payment confirmation does not match the pending request.');
+    }
+
     const student = db.getStudentByAdmission(data.admissionNo);
     if (!student) {
       throw new Error(`Student with admission number ${data.admissionNo} not found.`);
+    }
+    if (data.amount > student.currentTermBalance) {
+      throw new Error('The current balance changed before payment confirmation.');
     }
 
     // Generate authentic Safaricom M-Pesa receipt code if not provided
@@ -67,6 +112,10 @@ export class MpesaService {
         mpesaRef += chars.charAt(Math.floor(Math.random() * chars.length));
       }
     }
+    if (db.getTransactions().some(transaction => transaction.referenceCode === mpesaRef)) {
+      throw new Error('This M-Pesa receipt has already been processed.');
+    }
+    this.pendingPayments.delete(data.checkoutRequestId);
 
     const receiptNo = `NHS-REC-2026-${Math.floor(1000 + Math.random() * 9000)}`;
     const newTxn: PaymentTransactionRecord = {
@@ -85,8 +134,13 @@ export class MpesaService {
     };
 
     // Update student balance in ledger
-    const updatedStudent = db.updateStudentBalance(student.admissionNo, data.amount);
-    const savedTxn = db.addTransaction(newTxn);
+    const updatedStudent = await db.updateStudentBalance(student.admissionNo, data.amount);
+    if (!updatedStudent) throw new Error('Student balance could not be saved.');
+    const savedTxn = await db.addTransaction(newTxn);
+    if (!savedTxn) {
+      await db.updateStudentBalance(student.admissionNo, -data.amount);
+      throw new Error('Payment transaction could not be saved.');
+    }
 
     // Trigger instant Parent SMS Receipt notification via Africa's Talking simulation
     await smsService.sendPaymentReceipt({
@@ -96,7 +150,7 @@ export class MpesaService {
       amount: data.amount,
       mpesaRef,
       receiptNo,
-      newBalance: updatedStudent ? updatedStudent.currentTermBalance : 0
+      newBalance: updatedStudent.currentTermBalance
     });
 
     return {

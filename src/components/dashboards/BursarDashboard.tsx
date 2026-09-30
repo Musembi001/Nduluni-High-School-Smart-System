@@ -78,7 +78,6 @@ export const BursarDashboard: React.FC = () => {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'x-user-role': 'BURSAR'
         },
         body: JSON.stringify({
           admissionNo: bankAdmNo,

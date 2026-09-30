@@ -1,6 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import { SCHOOL_SUBJECTS } from '../data/subjects.js';
+import { initializePostgresStore, readPostgresStore, writePostgresStore } from './postgresStore.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -13,11 +15,12 @@ export interface StudentRecord {
   form: number;
   stream: string;
   house: string;
+  enrolledSubjectCodes?: string[];
   guardianName: string;
   guardianPhone: string;
-  kcpeMarks: number;
+  kcpeMarks: number | null;
   currentTermBalance: number;
-  attendanceRate: number;
+  attendanceRate: number | null;
   classTeacher: string;
   subjects: {
     code: string;
@@ -75,6 +78,13 @@ export interface SmsRecord {
 }
 
 const DB_FILE = path.resolve(__dirname, 'data_store.json');
+const STORE_KEY = 'school-data';
+
+const EMPTY_DATA: {
+  students: StudentRecord[];
+  transactions: PaymentTransactionRecord[];
+  smsLogs: SmsRecord[];
+} = { students: [], transactions: [], smsLogs: [] };
 
 const INITIAL_DATA: {
   students: StudentRecord[];
@@ -241,10 +251,22 @@ const INITIAL_DATA: {
 };
 
 class BackendDatabase {
-  private data = INITIAL_DATA;
+  private data = process.env.NODE_ENV === 'production' ? structuredClone(EMPTY_DATA) : structuredClone(INITIAL_DATA);
 
   constructor() {
-    this.load();
+    if (process.env.NODE_ENV !== 'production') this.load();
+  }
+
+  async initialize(): Promise<void> {
+    if (process.env.NODE_ENV !== 'production') return;
+    await initializePostgresStore();
+    const storedData = await readPostgresStore<typeof EMPTY_DATA>(STORE_KEY);
+    if (storedData) {
+      this.data = storedData;
+      return;
+    }
+    this.data = structuredClone(EMPTY_DATA);
+    await writePostgresStore(STORE_KEY, this.data);
   }
 
   private load() {
@@ -260,11 +282,22 @@ class BackendDatabase {
     }
   }
 
-  private save() {
+  private async save(): Promise<boolean> {
+    if (process.env.NODE_ENV === 'production') {
+      try {
+        await writePostgresStore(STORE_KEY, this.data);
+        return true;
+      } catch (error) {
+        console.error('Unable to persist student data to PostgreSQL:', error);
+        return false;
+      }
+    }
     try {
       fs.writeFileSync(DB_FILE, JSON.stringify(this.data, null, 2), 'utf-8');
+      return true;
     } catch (e) {
       console.error("Error saving database file", e);
+      return false;
     }
   }
 
@@ -277,18 +310,63 @@ class BackendDatabase {
     return this.data.students.find(s => s.admissionNo.toLowerCase() === adm.toLowerCase());
   }
 
-  updateStudentBalance(admissionNo: string, amountDeducted: number): StudentRecord | null {
+  async addStudents(students: StudentRecord[]): Promise<{ added: number; error?: string }> {
+    const existingAdmissions = new Set(this.data.students.map(student => student.admissionNo.toLowerCase()));
+    const incomingAdmissions = new Set<string>();
+
+    for (const student of students) {
+      const admissionNo = student.admissionNo.toLowerCase();
+      if (existingAdmissions.has(admissionNo) || incomingAdmissions.has(admissionNo)) {
+        return { added: 0, error: `Admission number ${student.admissionNo} already exists.` };
+      }
+      incomingAdmissions.add(admissionNo);
+    }
+
+    const previousData = this.data;
+    const previousLength = this.data.students.length;
+    this.data.students.push(...students);
+    if (!(await this.save())) {
+      this.data = previousData;
+      this.data.students.splice(previousLength);
+      return { added: 0, error: 'The roster could not be saved. No students were imported.' };
+    }
+    return { added: students.length };
+  }
+
+  async updateStudentBalance(admissionNo: string, amountDeducted: number): Promise<StudentRecord | null> {
     const std = this.getStudentByAdmission(admissionNo);
     if (!std) return null;
+    const previousBalance = std.currentTermBalance;
     std.currentTermBalance = Math.max(0, std.currentTermBalance - amountDeducted);
-    this.save();
+    if (!(await this.save())) {
+      std.currentTermBalance = previousBalance;
+      return null;
+    }
     return std;
   }
 
-  updateStudentMarks(admissionNo: string, subjectCode: string, cat1: number, cat2: number, endTerm: number, teacherRemarks: string): StudentRecord | null {
+  async updateStudentMarks(admissionNo: string, subjectCode: string, cat1: number, cat2: number, endTerm: number, teacherRemarks: string): Promise<StudentRecord | null> {
     const std = this.getStudentByAdmission(admissionNo);
     if (!std) return null;
-    const subj = std.subjects.find(s => s.code === subjectCode);
+    const previousStudent = structuredClone(std);
+    let subj = std.subjects.find(s => s.code === subjectCode);
+    if (!subj && std.enrolledSubjectCodes?.includes(subjectCode)) {
+      const subject = SCHOOL_SUBJECTS.find(item => item.code === subjectCode);
+      if (!subject) return null;
+      subj = {
+        code: subject.code,
+        name: subject.name,
+        cat1: 0,
+        cat2: 0,
+        endTerm: 0,
+        score: 0,
+        grade: 'Not graded',
+        points: 0,
+        teacherRemarks: '',
+        department: subject.department
+      };
+      std.subjects.push(subj);
+    }
     if (!subj) return null;
 
     subj.cat1 = cat1;
@@ -313,10 +391,11 @@ class BackendDatabase {
     subj.teacherRemarks = teacherRemarks;
 
     // Recalculate student mean and points
-    const totalScore = std.subjects.reduce((sum, s) => sum + s.score, 0);
-    const totalPoints = std.subjects.reduce((sum, s) => sum + s.points, 0);
-    const meanScore = Number((totalScore / std.subjects.length).toFixed(1));
-    const meanPoints = totalPoints / std.subjects.length;
+    const gradedSubjects = std.subjects.filter(subject => subject.grade !== 'Not graded');
+    const totalScore = gradedSubjects.reduce((sum, subject) => sum + subject.score, 0);
+    const totalPoints = gradedSubjects.reduce((sum, subject) => sum + subject.points, 0);
+    const meanScore = gradedSubjects.length ? Number((totalScore / gradedSubjects.length).toFixed(1)) : 0;
+    const meanPoints = gradedSubjects.length ? totalPoints / gradedSubjects.length : 0;
 
     std.termSummary.meanScore = meanScore;
     std.termSummary.totalPoints = totalPoints;
@@ -332,7 +411,10 @@ class BackendDatabase {
     else if (meanPoints >= 3.5) std.termSummary.meanGrade = 'D+';
     else std.termSummary.meanGrade = 'D';
 
-    this.save();
+    if (!(await this.save())) {
+      Object.assign(std, previousStudent);
+      return null;
+    }
     return std;
   }
 
@@ -341,10 +423,27 @@ class BackendDatabase {
     return this.data.transactions;
   }
 
-  addTransaction(txn: PaymentTransactionRecord): PaymentTransactionRecord {
+  async addTransaction(txn: PaymentTransactionRecord): Promise<PaymentTransactionRecord | null> {
     this.data.transactions.unshift(txn);
-    this.save();
+    if (!(await this.save())) {
+      this.data.transactions.shift();
+      return null;
+    }
     return txn;
+  }
+
+  async recordBankDeposit(admissionNo: string, amount: number, txn: PaymentTransactionRecord): Promise<{ transaction: PaymentTransactionRecord; student: StudentRecord } | null> {
+    const student = this.getStudentByAdmission(admissionNo);
+    if (!student) return null;
+    const previousBalance = student.currentTermBalance;
+    student.currentTermBalance = Math.max(0, previousBalance - amount);
+    this.data.transactions.unshift(txn);
+    if (!(await this.save())) {
+      student.currentTermBalance = previousBalance;
+      this.data.transactions.shift();
+      return null;
+    }
+    return { transaction: txn, student };
   }
 
   // SMS
@@ -352,10 +451,23 @@ class BackendDatabase {
     return this.data.smsLogs;
   }
 
-  addSmsLog(sms: SmsRecord): SmsRecord {
+  async addSmsLog(sms: SmsRecord): Promise<SmsRecord | null> {
     this.data.smsLogs.unshift(sms);
-    this.save();
+    if (!(await this.save())) {
+      this.data.smsLogs.shift();
+      return null;
+    }
     return sms;
+  }
+
+  async addSmsLogs(records: SmsRecord[]): Promise<boolean> {
+    if (!records.length) return true;
+    this.data.smsLogs.unshift(...records);
+    if (!(await this.save())) {
+      this.data.smsLogs.splice(0, records.length);
+      return false;
+    }
+    return true;
   }
 }
 
