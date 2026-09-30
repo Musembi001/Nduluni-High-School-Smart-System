@@ -1,0 +1,8 @@
+{
+  "name": "Remix Nduluni High School Portal \u0026 Website",
+  "description": "Official institutional portal for Nduluni High School featuring student and parent dashboards, academic report cards, termly event calendar, and online fee payment via M-Pesa.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}
